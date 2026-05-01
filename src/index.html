@@ -8,12 +8,26 @@
 </head>
 <body>
   <div id="app">
+
+    <header>
+      <span id="username-display"></span>
+      <span id="online-count"></span>
+    </header>
+
     <div id="chat-window"></div>
+
     <div id="typing-indicator"></div>
-    <form id="message-form">
-      <input type="text" id="message-input" placeholder="Say something..." autocomplete="off" />
-      <button type="submit">Send</button>
-    </form>
+
+    <div id="input-row">
+      <input
+        type="text"
+        id="message-input"
+        placeholder="Say something..."
+        autocomplete="off"
+      />
+      <button id="send-btn">Send</button>
+    </div>
+
   </div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
