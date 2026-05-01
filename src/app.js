@@ -19,23 +19,6 @@ const onlineCount = document.getElementById('online-count')
 
 usernameDisplay.textContent = username
 
-// --- Send message ---
-async function sendMessage() {
-  const content = messageInput.value.trim()
-  if (!content) return
-
-  messageInput.value = ''
-
-  // Optimistic UI — show instantly before Supabase confirms
-  appendMessage({ username, content, id: 'optimistic-' + Date.now() }, true)
-
-  const { error } = await client
-    .from('messages')
-    .insert({ username, content })
-
-  if (error) console.error('Send error:', error)
-}
-
 // --- Render a message bubble ---
 function appendMessage(msg, isMine) {
   const div = document.createElement('div')
@@ -57,10 +40,70 @@ function appendMessage(msg, isMine) {
   chatWindow.scrollTop = chatWindow.scrollHeight
 }
 
+// --- Broadcast channel for typing indicators ---
+const room = client.channel('chat-room')
+
+let typingTimeout
+
+room
+  .on('broadcast', { event: 'typing' }, ({ payload }) => {
+    if (payload.username === username) return
+
+    if (payload.isTyping) {
+      typingIndicator.textContent = `${payload.username} is typing...`
+    } else {
+      typingIndicator.textContent = ''
+    }
+  })
+  .subscribe((status) => {
+    console.log('Room status:', status)
+  })
+
+function broadcastTyping(isTyping) {
+  room.send({
+    type: 'broadcast',
+    event: 'typing',
+    payload: { username, isTyping }
+  })
+}
+
+// --- Send message ---
+async function sendMessage() {
+  const content = messageInput.value.trim()
+  if (!content) return
+
+  messageInput.value = ''
+
+  // Clear typing indicator immediately on send
+  clearTimeout(typingTimeout)
+  broadcastTyping(false)
+
+  appendMessage({ username, content, id: 'optimistic-' + Date.now() }, true)
+
+  const { error } = await client
+    .from('messages')
+    .insert({ username, content })
+
+  if (error) console.error('Send error:', error)
+}
+
 // --- Event listeners ---
 sendBtn.addEventListener('click', sendMessage)
+
 messageInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') sendMessage()
+})
+
+messageInput.addEventListener('input', () => {
+  if (messageInput.value.trim() === '') {
+    clearTimeout(typingTimeout)
+    broadcastTyping(false)
+    return
+  }
+
+  broadcastTyping(true)
+  clearTimeout(typingTimeout)
+  typingTimeout = setTimeout(() => broadcastTyping(false), 2000)
 })
 
 // --- Load past messages ---
@@ -72,7 +115,6 @@ async function loadMessages() {
     .limit(50)
 
   if (error) { console.error('Load error:', error); return }
-
   data.forEach(msg => appendMessage(msg, msg.username === username))
 }
 
@@ -86,51 +128,12 @@ client
     { event: 'INSERT', schema: 'public', table: 'messages' },
     (payload) => {
       const msg = payload.new
-
       const optimistic = chatWindow.querySelector('[data-id^="optimistic-"]')
       if (optimistic && msg.username === username) {
         optimistic.dataset.id = msg.id
         return
       }
-
       appendMessage(msg, msg.username === username)
     }
   )
   .subscribe()
-
-// --- Realtime: typing indicators via Presence ---
-const room = client.channel('room:typing', {
-  config: { presence: { key: username } }
-})
-
-let typingTimeout
-
-messageInput.addEventListener('input', () => {
-  room.track({ typing: true })
-  clearTimeout(typingTimeout)
-  typingTimeout = setTimeout(() => {
-    room.track({ typing: false })
-  }, 2000)
-})
-
-room.on('presence', { event: 'sync' }, () => {
-  const state = room.presenceState()
-
-  const typers = Object.keys(state).filter(key => {
-    if (key === username) return false
-    const presences = state[key]
-    return presences.some(p => p.typing === true)
-  })
-
-  if (typers.length === 0) {
-    typingIndicator.textContent = ''
-  } else if (typers.length === 1) {
-    typingIndicator.textContent = `${typers[0]} is typing...`
-  } else {
-    typingIndicator.textContent = `${typers.slice(0, -1).join(', ')} and ${typers.slice(-1)} are typing...`
-  }
-
-  onlineCount.textContent = `${Object.keys(state).length} online`
-})
-
-room.subscribe()
